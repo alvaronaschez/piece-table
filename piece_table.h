@@ -9,7 +9,7 @@ typedef struct PieceTable PieceTable;
 PieceTable *pt_new();
 void pt_free(PieceTable *);
 
-void pt_load(char *file_name);
+void pt_load(PieceTable *, char *file_name);
 void pt_save(PieceTable *);
 
 void pt_insert(PieceTable *, size_t offset, char *data, size_t len);
