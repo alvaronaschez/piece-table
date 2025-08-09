@@ -18,6 +18,7 @@ struct PieceTable {
   size_t original_buffer_len;
   size_t add_buffer_len, add_buffer_capacity;
   struct piece *head, *tail; // sentinel nodes
+  struct piece *global_last; // for cleanup
   size_t len;
 
   struct change *undo_stack, *redo_stack;
@@ -29,6 +30,7 @@ struct piece {
   enum buffer_type buf;
   size_t offset, len;
   struct piece *next, *prev;
+  struct piece *global_next; // for cleanup
 };
 
 struct piece_range {
@@ -49,18 +51,43 @@ PieceTable *pt_new() {
   pt->head->next = pt->tail;
   pt->tail->prev = pt->head;
 
+  pt->head->global_next = pt->global_last = pt->tail;
+
   return pt;
 }
 
+//// TODO: free pieces in range
+//static void _free_piece_range(struct piece_range pr) {
+//  if (pr.first == pr.last) {
+//    free(pr.first);
+//  } else {
+//    struct piece *aux = pr.first;
+//    pr.first = pr.first->next;
+//    free(aux);
+//    _free_piece_range(pr);
+//  }
+//}
+
 void pt_free(PieceTable *pt) {
-  struct piece *p;
-  while (pt->head) {
-    p = pt->head;
-    free(pt->head);
-    pt->head = p->next;
+  // free pieces
+  struct piece *p, *q;
+  p = pt->head;
+  while (p) {
+    q = p->global_next;
+    free(p);
+    p = q;
   }
+
+  // unmap original buffer
   if (pt->original_buffer)
     munmap(pt->original_buffer, pt->original_buffer_len);
+
+  // free undo and redo stacks
+  struct change *changes[] = {pt->undo_stack, pt->redo_stack};
+  for (int i = 0; i < 2; i++) {
+    struct change *c, *aux;
+    c = changes[i];
+  }
 }
 
 void handle_error(char *msg) {
@@ -94,12 +121,14 @@ void pt_load(PieceTable *pt, char *file_name) {
   new_piece->buf = ORIGINAL;
   new_piece->len = pt->original_buffer_len;
   new_piece->offset = 0;
+  pt->global_last->global_next = new_piece;
+  pt->global_last = new_piece;
 }
 
-void pt_print(PieceTable *pt){
+void pt_print(PieceTable *pt) {
   struct piece *p = pt->head->next;
-  while(p!=pt->tail){
-    const void * buf = p->buf == ORIGINAL ? pt->original_buffer : pt->add_buffer;
+  while (p != pt->tail) {
+    const void *buf = p->buf == ORIGINAL ? pt->original_buffer : pt->add_buffer;
     write(STDOUT_FILENO, buf + p->offset, p->len);
     p = p->next;
   }
@@ -109,7 +138,7 @@ int main() {
   printf("--start--\n");
   PieceTable *pt = pt_new();
   pt_load(pt, "/home/alvaro/ws/piece-table/piece_table.c");
-  //write(STDOUT_FILENO, pt->original_buffer, pt->original_buffer_len);
+  // write(STDOUT_FILENO, pt->original_buffer, pt->original_buffer_len);
   pt_print(pt);
   pt_free(pt);
   printf("--end--\n");
