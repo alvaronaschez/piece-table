@@ -12,7 +12,7 @@
 #define ADD_BUFFER_INITIAL_CAPACITY 1024
 
 struct piece;
-struct change;
+struct change_stack;
 
 // TODO: hcreate to implement cache
 struct PieceTable {
@@ -22,7 +22,7 @@ struct PieceTable {
   struct piece *head, *tail; // sentinel nodes
   size_t len;
 
-  struct change *undo_stack, *redo_stack;
+  struct change_stack *undo_stack, *redo_stack;
 };
 
 enum buffer_type { ORIGINAL, ADD };
@@ -42,13 +42,13 @@ struct piece_range {
   struct piece *first, *last;
 };
 
-struct change {
-  struct piece_range *current, *old;
-  struct change *next;
+struct change_stack{
+  struct piece_range *new, *old;
+  struct change_stack *next;
 };
 
 void free_piece_range(struct piece *begin, struct piece *end);
-void ch_free(struct change *);
+void chs_free(struct change_stack *);
 
 PieceTable *pt_new() {
   PieceTable *pt = calloc(1, sizeof(PieceTable));
@@ -71,20 +71,9 @@ void pt_free(PieceTable *pt) {
     munmap(pt->original_buffer, pt->original_buffer_len);
 
   // free undo and redo stacks
-  ch_free(pt->undo_stack);
-  ch_free(pt->redo_stack);
+  chs_free(pt->undo_stack);
+  chs_free(pt->redo_stack);
 }
-
-//struct piece *p_new(enum buffer_type buf, size_t offset, size_t len,
-//                    struct piece *next, struct piece *prev) {
-//  struct piece *new_piece = malloc(sizeof(struct piece));
-//  new_piece->buf = buf;
-//  new_piece->offset = offset;
-//  new_piece->len = len;
-//  new_piece->next = next;
-//  new_piece->prev = prev;
-//  return new_piece;
-//}
 
 void handle_error(char *msg) {
   printf("error: %s\n", msg);
@@ -154,7 +143,12 @@ struct piece *add(PieceTable *pt, char *string, size_t len) {
   return piece;
 }
 
+//void pt_apply_change(PieceTable *pt, struct change *ch){
+//}
+
 bool pt_delete(PieceTable *pt, size_t offset, size_t len) {
+  if(len==0)
+    return true;
   if (offset + len > pt->len)
     return false;
 
@@ -163,13 +157,16 @@ bool pt_delete(PieceTable *pt, size_t offset, size_t len) {
   struct position end = find(begin.piece, begin.offset + len);
 
   // create change
-  struct change *ch = calloc(1, sizeof(struct change));
-  ch->old->first = begin.piece;
-  ch->old->last = end.piece;
+  struct change_stack *chs = malloc(sizeof(struct change_stack));
+  struct piece_range *new = chs->new = malloc(sizeof(struct piece_range));
+  struct piece_range *old = chs->old = malloc(sizeof(struct piece_range));
+
+  old->first = begin.piece;
+  old->last = end.piece;
 
   if (begin.offset > 0) {
-    ch->current->first = malloc(sizeof(struct piece));
-    *ch->current->first = (struct piece){
+    new->first = malloc(sizeof(struct piece));
+    *new->first = (struct piece){
         .buf = begin.piece->buf,
         .offset = begin.piece->offset,
         .len = begin.offset,
@@ -178,8 +175,8 @@ bool pt_delete(PieceTable *pt, size_t offset, size_t len) {
     };
   }
   if (end.offset < end.piece->len - 1) {
-    ch->current->last = malloc(sizeof(struct piece));
-    *ch->current->last = (struct piece){
+    new->last = malloc(sizeof(struct piece));
+    *new->last = (struct piece){
         .buf = end.piece->buf,
         .offset = begin.piece->offset,
         .len = begin.offset,
@@ -187,25 +184,60 @@ bool pt_delete(PieceTable *pt, size_t offset, size_t len) {
         .next = end.piece->next,
     };
   }
-  if (!ch->current->first)
-    ch->current->first = ch->current->last;
-  if (!ch->current->last)
-    ch->current->last = ch->current->first;
+  if (!new->first)
+    new->first = new->last;
+  if (!new->last)
+    new->last = new->first;
 
   // apply change
-  // if(ch->current.first && ch->current.last){
-  if (ch->current->first) {
-    ch->current->first->next = ch->current->last;
-    ch->current->last->prev = ch->current->first;
-    begin.piece->prev->next = ch->current->first;
-    end.piece->next->prev = ch->current->last;
+  // if(new->first && new->last){
+  if (new->first) {
+    new->first->next = new->last;
+    new->last->prev = new->first;
+    begin.piece->prev->next = new->first;
+    end.piece->next->prev = new->last;
   } else {
     begin.piece->prev->next = end.piece->next;
     end.piece->next->prev = begin.piece->prev;
   }
 
   // cleanup redo stack
-  ch_free(pt->redo_stack);
+  chs_free(pt->redo_stack);
+  pt->redo_stack = NULL;
+
+  // update undo stack
+  chs->next = pt->undo_stack;
+  pt->undo_stack = chs;
+
+  return true;
+}
+
+bool pt_insert(PieceTable *pt, size_t offset, char *str, size_t len) {
+  // TODO
+  if (len==0)
+    return true;
+
+  if(pt->len == 0){
+    struct piece *new_piece = add(pt,str,len); 
+    struct change_stack *chs = malloc(sizeof(struct change_stack));
+    chs->new = malloc(sizeof(struct piece_range));
+    chs->new->first= chs->new->last = new_piece;
+    chs->old = NULL;
+    chs->next = NULL;
+  }
+
+  struct position pos = find(pt->head, offset);
+
+  // create change
+  struct change_stack *ch;
+  if(pos.offset == 0){ // at boundary
+  }else{
+  }
+
+  // apply change
+
+  // cleanup redo stack
+  chs_free(pt->redo_stack);
   pt->redo_stack = NULL;
 
   // update undo stack
@@ -215,44 +247,31 @@ bool pt_delete(PieceTable *pt, size_t offset, size_t len) {
   return true;
 }
 
-bool pt_insert(PieceTable *pt, size_t offset, char *str, size_t len) {
-  // TODO
-  if (offset + len > pt->len)
-    return false;
-
-  struct position begin = find(pt->head, offset);
-  struct position end = find(begin.piece, begin.offset + len);
-
-  return true;
-}
-
-void free_piece_range(struct piece *begin, struct piece *end) {
-  if (begin == NULL && end == NULL)
+void free_piece_range(struct piece *first, struct piece *last) {
+  if (first == NULL && last == NULL)
     return;
-  assert(begin && end);
-  if (begin == end) {
-    free(begin);
+  assert(first && last);
+  if (first == last) {
+    free(first);
     return;
   }
-  struct piece *begin_next = begin->next;
-  free(begin);
-  free_piece_range(begin_next, end);
+  struct piece *begin_next = first->next;
+  free(first);
+  free_piece_range(begin_next, last);
 }
 
-void pr_free(struct piece_range *pr) {
-  if (!pr)
-    return;
+void pr_free(struct piece_range *pr){
   free_piece_range(pr->first, pr->last);
   free(pr);
 }
 
-void ch_free(struct change *ch) {
-  if (!ch)
+void chs_free(struct change_stack *chs) {
+  if (!chs)
     return;
-  struct change *change_next = ch->next;
-  pr_free(ch->old);
-  free(ch);
-  ch_free(change_next);
+  pr_free(chs->old);
+  struct change_stack *change_next = chs->next;
+  free(chs);
+  chs_free(change_next);
 }
 
 int main() {
