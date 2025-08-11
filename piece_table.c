@@ -4,6 +4,7 @@
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -139,6 +140,22 @@ struct position find(struct piece *piece, size_t offset) {
   if (piece->len > offset)
     return (struct position){.piece = piece, .offset = offset};
   return find(piece->next, offset - piece->len);
+}
+
+struct piece *add(PieceTable *pt, char *string) {
+  size_t len = strlen(string);
+  if(!len) return NULL;
+  // make room in add_buffer
+  while (pt->add_buffer_capacity < pt->add_buffer_len + len + 1) {
+    pt->add_buffer = realloc(pt->add_buffer, pt->add_buffer_capacity *= 2);
+  }
+  strcpy(string, pt->add_buffer + pt->add_buffer_len);
+  struct piece *piece = calloc(1, sizeof(struct piece));
+  *piece = (struct piece){.buf=ADD, .offset=pt->add_buffer_len, .len = len-1};
+  pt->global_last->global_next = piece;
+  pt->global_last = piece;
+  pt->add_buffer_len += len;
+  return piece;
 }
 
 bool pt_delete(PieceTable *pt, size_t offset, size_t len) {
