@@ -142,16 +142,20 @@ struct position find(struct piece *piece, size_t offset) {
   return find(piece->next, offset - piece->len);
 }
 
-struct piece *add(PieceTable *pt, char *string) {
-  size_t len = strlen(string);
-  if(!len) return NULL;
+struct piece *add(PieceTable *pt, char *string, size_t len) {
+  if (len == 0)
+    return NULL;
   // make room in add_buffer
-  while (pt->add_buffer_capacity < pt->add_buffer_len + len + 1) {
+  while (pt->add_buffer_capacity < pt->add_buffer_len + len) {
     pt->add_buffer = realloc(pt->add_buffer, pt->add_buffer_capacity *= 2);
   }
-  strcpy(string, pt->add_buffer + pt->add_buffer_len);
-  struct piece *piece = calloc(1, sizeof(struct piece));
-  *piece = (struct piece){.buf=ADD, .offset=pt->add_buffer_len, .len = len-1};
+  memcpy(string, pt->add_buffer + pt->add_buffer_len, len);
+  struct piece *piece = malloc(sizeof(struct piece));
+  *piece = (struct piece){.buf = ADD,
+                          .offset = pt->add_buffer_len,
+                          .len = len - 1,
+                          .next = NULL,
+                          .prev = NULL};
   pt->global_last->global_next = piece;
   pt->global_last = piece;
   pt->add_buffer_len += len;
@@ -165,6 +169,48 @@ bool pt_delete(PieceTable *pt, size_t offset, size_t len) {
 
   struct position begin = find(pt->head, offset);
   struct position end = find(begin.piece, begin.offset + len);
+
+  struct change *ch = calloc(1,	sizeof(struct change));
+  ch->changed.first = begin.piece;
+  ch->changed.last = end.piece;
+  if (begin.offset > 0) {
+    ch->current.first = malloc(sizeof(struct piece));
+    ch->current.first->buf = begin.piece->buf;
+    ch->current.first->offset = begin.piece->offset;
+    ch->current.first->len = begin.offset;
+    ch->current.first->prev = begin.piece->prev;
+    ch->current.first->next = NULL;
+    ch->current.first->global_next = NULL;
+    pt->global_last->next = ch->current.first;
+    pt->global_last = ch->current.first;
+  }
+  if(end.offset < end.piece->len-1){
+    ch->current.last = malloc(sizeof(struct piece));
+    ch->current.last->buf = end.piece->buf;
+    ch->current.last->offset = begin.piece->offset;
+    ch->current.last->len = begin.offset;
+    ch->current.last->prev = NULL;
+    ch->current.last->next = end.piece->next;
+    ch->current.last->global_next = NULL;
+    pt->global_last->next = ch->current.last;
+    pt->global_last = ch->current.last;
+  }
+  if(!ch->current.first)
+    ch->current.first = ch->current.last;
+  if(!ch->current.last)
+    ch->current.last = ch->current.first;
+
+  //if(ch->current.first && ch->current.last){
+  if(ch->current.first){
+    ch->current.first->next = ch->current.last;
+    ch->current.last->prev = ch->current.first;
+    begin.piece->prev->next = ch->current.first;
+    end.piece->next->prev = ch->current.last;
+  } else {
+    begin.piece->prev->next = end.piece->next;
+    end.piece->next->prev = begin.piece->prev;
+  }
+
 
   return true;
 }
