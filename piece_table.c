@@ -43,7 +43,7 @@ struct piece_range {
 };
 
 struct change_stack {
-  struct piece_range *new, *old;
+  struct piece_range new, old;
   struct change_stack *next;
 };
 
@@ -156,8 +156,7 @@ bool pr_empty(const struct piece_range *pr) {
  * pr->head->next to pr->tail->prev, and the change is empty iff
  * pr->head == pr->tail.
  */
-void apply_change(PieceTable *pt, struct piece_range *current,
-                  struct piece_range *new) {
+void pr_apply_change(struct piece_range *current, struct piece_range *new) {
   if (pr_empty(new)) {
     current->head->next = current->tail;
     current->tail->prev = current->head;
@@ -182,8 +181,8 @@ bool pt_delete(PieceTable *pt, size_t offset, size_t len) {
 
   // create change
   struct change_stack *chs = malloc(sizeof(struct change_stack));
-  struct piece_range *new = chs->new = malloc(sizeof(struct piece_range));
-  struct piece_range *old = chs->old = malloc(sizeof(struct piece_range));
+  struct piece_range *new = &chs->new;
+  struct piece_range *old = &chs->old;
 
   old->head = begin.piece;
   old->tail = end.piece;
@@ -244,7 +243,6 @@ bool pt_insert(PieceTable *pt, size_t offset, char *str, size_t len) {
   if (pt->len == 0) {
     struct piece *new_piece = add(pt, str, len);
     struct change_stack *chs = malloc(sizeof(struct change_stack));
-    chs->new = malloc(sizeof(struct piece_range));
     chs->new->head = chs->new->tail = new_piece;
     chs->old = NULL;
     chs->next = NULL;
@@ -292,7 +290,6 @@ void pr_free(struct piece_range *pr) {
 void chs_free(struct change_stack *chs) {
   if (!chs)
     return;
-  pr_free(chs->old);
   struct change_stack *change_next = chs->next;
   free(chs);
   chs_free(change_next);
