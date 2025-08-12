@@ -155,14 +155,32 @@ bool pr_empty(const struct piece_range *pr) {
  * begin and end nodes, in other words, the efective range goes from
  * pr->head->next to pr->tail->prev, and the change is empty iff
  * pr->head == pr->tail.
+ * After the swap the new range becomes the current one, and the current the old
+ * one.
  */
-void pr_apply_change(struct piece_range *current, struct piece_range *new) {
-  if (pr_empty(new)) {
-    current->head->next = current->tail;
-    current->tail->prev = current->head;
-  } else {
+void pr_swap(struct piece_range *current, struct piece_range *new) {
+  // backup some pieces for later
+  struct piece *current_head_next = current->head->next;
+  struct piece *current_tail_prev = current->tail->prev;
+  // put new piece range in place
+  if (!pr_empty(new)) {
     current->head->next = new->head->next;
     current->tail->prev = new->tail->prev;
+    new->head->next->prev = current->head;
+    new->tail->prev->next = current->tail;
+  } else {
+    current->head->next = current->tail;
+    current->tail->prev = current->head;
+  }
+  // put old piece range in place
+  if (!pr_empty(current)) {
+    new->head->next = current_head_next;
+    new->tail->prev = current_tail_prev;
+    current_head_next->prev = new->head;
+    current_tail_prev->next = new->tail;
+  } else {
+    new->head->next = new->tail;
+    new->tail->prev = new->head;
   }
 }
 
