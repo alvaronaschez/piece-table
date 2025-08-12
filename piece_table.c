@@ -39,10 +39,10 @@ struct position {
 };
 
 struct piece_range {
-  struct piece *first, *last;
+  struct piece *head, *tail;
 };
 
-struct change_stack{
+struct change_stack {
   struct piece_range *new, *old;
   struct change_stack *next;
 };
@@ -143,11 +143,35 @@ struct piece *add(PieceTable *pt, char *string, size_t len) {
   return piece;
 }
 
-//void pt_apply_change(PieceTable *pt, struct change *ch){
-//}
+/**
+ * Check if a piece range with dummy head and tail nodes is empty.
+ */
+bool pr_empty(const struct piece_range *pr) {
+  return pr->head->next == pr->tail->prev;
+}
+
+/**
+ * Replace current piece range by new piece range. Both piece ranges has dummy
+ * begin and end nodes, in other words, the efective range goes from
+ * pr->head->next to pr->tail->prev, and the change is empty iff
+ * pr->head == pr->tail.
+ */
+void apply_change(PieceTable *pt, struct piece_range *current,
+                  struct piece_range *new) {
+  if (pr_empty(new)) {
+    current->head->next = current->tail;
+    current->tail->prev = current->head;
+  } else {
+    current->head->next = new->head->next;
+    current->tail->prev = new->tail->prev;
+  }
+}
+
+// void pt_apply_change(PieceTable *pt, struct change *ch){
+// }
 
 bool pt_delete(PieceTable *pt, size_t offset, size_t len) {
-  if(len==0)
+  if (len == 0)
     return true;
   if (offset + len > pt->len)
     return false;
@@ -161,12 +185,12 @@ bool pt_delete(PieceTable *pt, size_t offset, size_t len) {
   struct piece_range *new = chs->new = malloc(sizeof(struct piece_range));
   struct piece_range *old = chs->old = malloc(sizeof(struct piece_range));
 
-  old->first = begin.piece;
-  old->last = end.piece;
+  old->head = begin.piece;
+  old->tail = end.piece;
 
   if (begin.offset > 0) {
-    new->first = malloc(sizeof(struct piece));
-    *new->first = (struct piece){
+    new->head = malloc(sizeof(struct piece));
+    *new->head = (struct piece){
         .buf = begin.piece->buf,
         .offset = begin.piece->offset,
         .len = begin.offset,
@@ -175,8 +199,8 @@ bool pt_delete(PieceTable *pt, size_t offset, size_t len) {
     };
   }
   if (end.offset < end.piece->len - 1) {
-    new->last = malloc(sizeof(struct piece));
-    *new->last = (struct piece){
+    new->tail = malloc(sizeof(struct piece));
+    *new->tail = (struct piece){
         .buf = end.piece->buf,
         .offset = begin.piece->offset,
         .len = begin.offset,
@@ -184,18 +208,18 @@ bool pt_delete(PieceTable *pt, size_t offset, size_t len) {
         .next = end.piece->next,
     };
   }
-  if (!new->first)
-    new->first = new->last;
-  if (!new->last)
-    new->last = new->first;
+  if (!new->head)
+    new->head = new->tail;
+  if (!new->tail)
+    new->tail = new->head;
 
   // apply change
   // if(new->first && new->last){
-  if (new->first) {
-    new->first->next = new->last;
-    new->last->prev = new->first;
-    begin.piece->prev->next = new->first;
-    end.piece->next->prev = new->last;
+  if (new->head) {
+    new->head->next = new->tail;
+    new->tail->prev = new->head;
+    begin.piece->prev->next = new->head;
+    end.piece->next->prev = new->tail;
   } else {
     begin.piece->prev->next = end.piece->next;
     end.piece->next->prev = begin.piece->prev;
@@ -214,14 +238,14 @@ bool pt_delete(PieceTable *pt, size_t offset, size_t len) {
 
 bool pt_insert(PieceTable *pt, size_t offset, char *str, size_t len) {
   // TODO
-  if (len==0)
+  if (len == 0)
     return true;
 
-  if(pt->len == 0){
-    struct piece *new_piece = add(pt,str,len); 
+  if (pt->len == 0) {
+    struct piece *new_piece = add(pt, str, len);
     struct change_stack *chs = malloc(sizeof(struct change_stack));
     chs->new = malloc(sizeof(struct piece_range));
-    chs->new->first= chs->new->last = new_piece;
+    chs->new->head = chs->new->tail = new_piece;
     chs->old = NULL;
     chs->next = NULL;
   }
@@ -230,8 +254,8 @@ bool pt_insert(PieceTable *pt, size_t offset, char *str, size_t len) {
 
   // create change
   struct change_stack *ch;
-  if(pos.offset == 0){ // at boundary
-  }else{
+  if (pos.offset == 0) { // at boundary
+  } else {
   }
 
   // apply change
@@ -260,8 +284,8 @@ void free_piece_range(struct piece *first, struct piece *last) {
   free_piece_range(begin_next, last);
 }
 
-void pr_free(struct piece_range *pr){
-  free_piece_range(pr->first, pr->last);
+void pr_free(struct piece_range *pr) {
+  free_piece_range(pr->head, pr->tail);
   free(pr);
 }
 
