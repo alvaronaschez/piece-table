@@ -232,12 +232,28 @@ void piece_append(struct piece *p, struct piece *q) {
   p->next->prev = q;
 }
 
+void piece_prepend(struct piece *p, struct piece *q) {
+  piece_append(p->prev, q);
+}
+
 struct piece *piece_new(enum buffer_type buffer, size_t offset, size_t len) {
   struct piece *p = malloc(sizeof(struct piece));
   p->buffer = buffer;
   p->offset = offset;
   p->len = len;
   return p;
+}
+
+/**
+ * both indexes i and j are inclusive ie we copy the range [i, j]
+ */
+struct piece *new_subpiece(struct piece *p, size_t i, size_t j) {
+  assert(j >= i);
+  struct piece *q = malloc(sizeof(struct piece));
+  q->buffer = p->buffer;
+  q->offset = p->offset + i;
+  q->len = j - i + 1;
+  return q;
 }
 
 void pt_delete(PieceTable *pt, size_t offset, size_t len) {
@@ -268,19 +284,13 @@ void pt_delete(PieceTable *pt, size_t offset, size_t len) {
   // append changes to new range
   struct piece *p = new->head;
   if (begin.offset != 0) {
-    struct position begin_prev = position_prev(begin);
-    struct piece *q = piece_new(begin_prev.piece->buffer, // buffer
-                                begin_prev.piece->offset, // offset
-                                begin_prev.offset + 1);   // len
+    struct piece *q = new_subpiece(begin.piece, 0, begin.offset - 1);
     piece_append(p, q);
     p = q;
   }
   if (end.offset != end.piece->len - 1) {
-    struct position end_next = position_next(end);
     struct piece *q =
-        piece_new(end_next.piece->buffer,                   // buffer
-                  end_next.piece->offset + end_next.offset, // offset
-                  end_next.piece->len - end_next.offset);   // len
+        new_subpiece(end.piece, end.offset + 1, end.piece->len - 1);
     piece_append(p, q);
     p = q;
   }
@@ -319,10 +329,7 @@ void pt_insert(PieceTable *pt, size_t offset, char *str, size_t len) {
   // copy previous content before insertion point
   struct piece *p = new->head;
   if (pos.offset != 0) {
-    struct position prev_pos = position_prev(pos);
-    struct piece *q = piece_new(prev_pos.piece->buffer, // buffer
-                                prev_pos.piece->offset, // offset
-                                prev_pos.offset + 1);   // len
+    struct piece *q = new_subpiece(pos.piece, 0, pos.offset - 1);
     piece_append(p, q);
     p = q;
   }
@@ -333,16 +340,19 @@ void pt_insert(PieceTable *pt, size_t offset, char *str, size_t len) {
 
   // copy previous content after insertion point (including insertion point)
   if (pos.offset != 0) {
-    struct piece *q = piece_new(pos.piece->buffer,              // buffer
-                                pos.piece->offset + pos.offset, // offset
-                                pos.piece->len - pos.offset);   // len
+    struct piece *q = new_subpiece(pos.piece, pos.offset, pos.piece->len - 1);
     piece_append(p, q);
     p = q;
   }
 
   // create old piece range
-  old->head = pos.piece->prev;
-  old->tail = pos.piece->next;
+  if (pt->len == 0) {
+    old->head = pt->head;
+    old->tail = pt->tail;
+  } else {
+    old->head = pos.piece->prev;
+    old->tail = pos.piece->next;
+  }
 
   // apply change
   pr_swap(new, old);
