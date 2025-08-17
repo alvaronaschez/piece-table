@@ -11,8 +11,33 @@
 
 #define ADD_BUFFER_INITIAL_CAPACITY 1024
 
+struct PieceTable;
 struct piece;
+enum buffer_type { ORIGINAL, ADD };
+struct piece_range;
+struct piece_position;
 struct change_stack;
+
+void free_piece_range(struct piece *begin, struct piece *end);
+void chs_free(struct change_stack *);
+struct piece *piece_new(enum buffer_type, size_t offset, size_t len,
+                        struct piece *prev, struct piece *next);
+void piece_append(struct piece *, struct piece *);
+struct piece *new_subpiece(struct piece *p, size_t i, size_t j);
+bool pr_empty(const struct piece_range *pr);
+void pr_swap(struct piece_range *current, struct piece_range *new);
+void pr_free(struct piece_range *pr);
+struct piece_position find(struct piece *p, size_t offset);
+
+PieceTable *pt_new();
+void pt_free(PieceTable *);
+void pt_load_from_file(PieceTable *, char *);
+void pt_print(PieceTable *);
+char *pt_to_string(PieceTable *, size_t offset, size_t len);
+void pt_insert(PieceTable *pt, size_t offset, char *str, size_t len);
+void pt_delete(PieceTable *pt, size_t offset, size_t len);
+struct piece *pt_add_string(PieceTable *pt, char *string, size_t len);
+
 
 // TODO: hcreate to implement cache
 struct PieceTable {
@@ -25,7 +50,6 @@ struct PieceTable {
   struct change_stack *undo_stack, *redo_stack;
 };
 
-enum buffer_type { ORIGINAL, ADD };
 
 struct piece {
   enum buffer_type buffer;
@@ -33,13 +57,13 @@ struct piece {
   struct piece *next, *prev;
 };
 
-struct position {
-  struct piece *piece;
-  size_t offset;
-};
-
 struct piece_range {
   struct piece *head, *tail;
+};
+
+struct piece_position {
+  struct piece *piece;
+  size_t offset;
 };
 
 struct change_stack {
@@ -47,9 +71,6 @@ struct change_stack {
   struct change_stack *next;
 };
 
-void free_piece_range(struct piece *begin, struct piece *end);
-void chs_free(struct change_stack *);
-struct piece *piece_new(enum buffer_type, size_t offset, size_t len, struct piece *prev, struct piece *next);
 
 PieceTable *pt_new() {
   PieceTable *pt = calloc(1, sizeof(PieceTable));
@@ -57,13 +78,15 @@ PieceTable *pt_new() {
   // init dummy nodes
   pt->head = calloc(1, sizeof(struct piece));
   pt->tail = calloc(1, sizeof(struct piece));
-  pt->head->next = pt->tail->prev = piece_new(ADD, 0, 1, pt->head, pt->tail);
+  pt->tail->len = 1;
+  piece_append(pt->head, pt->tail);
+  // pt->head->next = pt->tail->prev = piece_new(ADD, 0, 1, pt->head, pt->tail);
 
   pt->original_buffer = NULL;
   pt->original_buffer_len = 0;
 
-  pt->add_buffer = calloc(ADD_BUFFER_INITIAL_CAPACITY, sizeof(char)); 
-  pt->add_buffer_len = 1;
+  pt->add_buffer = calloc(ADD_BUFFER_INITIAL_CAPACITY, sizeof(char));
+  pt->add_buffer_len = 0;
   pt->add_buffer_capacity = ADD_BUFFER_INITIAL_CAPACITY;
 
   pt->len = 0;
@@ -89,8 +112,8 @@ void handle_error(char *msg) {
   exit(EXIT_FAILURE);
 }
 
-void piece_append(struct piece*, struct piece*);
-void pt_load(PieceTable *pt, char *file_name) {
+
+void pt_load_from_file(PieceTable *pt, char *file_name) {
   int fd = open(file_name, O_RDONLY);
   if (fd == -1)
     handle_error("open");
@@ -116,9 +139,7 @@ void pt_load(PieceTable *pt, char *file_name) {
       .len = pt->original_buffer_len,
       .offset = 0,
   };
-  //pt->head->next = pt->tail->prev = new_piece;
   piece_append(pt->head, new_piece);
-  
 }
 
 void pt_print(PieceTable *pt) {
@@ -141,20 +162,15 @@ char *pt_to_string(PieceTable *pt, size_t offset, size_t len) {
   return c;
 }
 
-struct position find(struct piece *p, size_t offset) {
+struct piece_position find(struct piece *p, size_t offset) {
   assert(p);
   if (p->len > offset)
-    return (struct position){.piece = p, .offset = offset};
+    return (struct piece_position){.piece = p, .offset = offset};
   return find(p->next, offset - p->len);
 }
 
-//struct position pt_find(PieceTable *pt, size_t offset){
-//  if(pt->len == 0 && offset == 0)
-//    return (struct position){.piece=pt->head, .offset=0};
-//  return find(pt->head, offset);
-//}
-
 struct piece *pt_add_string(PieceTable *pt, char *string, size_t len) {
+  // TODO: if possible append to last piece
   if (len == 0)
     return NULL;
   // make room in add_buffer
@@ -213,35 +229,6 @@ void pr_swap(struct piece_range *current, struct piece_range *new) {
   }
 }
 
-struct position position_next(struct position p) {
-  assert(p.piece->next);              // we cannot be in a dummy node
-  if (p.offset == p.piece->len - 1) { // at the end of the piece
-    // we are in the last position, return same position
-    if (p.piece->next->next == NULL)
-      return p;
-    return (struct position){.piece = p.piece->next, .offset = 0};
-  }
-  p.offset++;
-  return p;
-}
-
-struct position position_prev(struct position p) {
-  assert(p.piece->prev); // we cannot be in a dummy node
-  if (p.offset == 0) {   // at the beginning of the piece
-    // we are in the first position, return same position
-    if (p.piece->prev->prev == NULL)
-      return p;
-    return (struct position){.piece = p.piece->prev,
-                             .offset = p.piece->prev->len - 1};
-  }
-  p.offset--;
-  return p;
-}
-
-bool position_equal(struct position *p, struct position *q) {
-  return p->piece == q->piece && p->offset == q->offset;
-}
-
 void piece_append(struct piece *p, struct piece *q) {
   q->prev = p;
   q->next = p->next;
@@ -249,11 +236,8 @@ void piece_append(struct piece *p, struct piece *q) {
   p->next->prev = q;
 }
 
-void piece_prepend(struct piece *p, struct piece *q) {
-  piece_append(p->prev, q);
-}
-
-struct piece *piece_new(enum buffer_type buffer, size_t offset, size_t len, struct piece *prev, struct piece *next) {
+struct piece *piece_new(enum buffer_type buffer, size_t offset, size_t len,
+                        struct piece *prev, struct piece *next) {
   struct piece *p = malloc(sizeof(struct piece));
   p->buffer = buffer;
   p->offset = offset;
@@ -283,8 +267,8 @@ void pt_delete(PieceTable *pt, size_t offset, size_t len) {
     return;
 
   // find begin and end positions to delete
-  struct position begin = find(pt->head, offset);
-  struct position end = find(begin.piece, begin.offset + len - 1);
+  struct piece_position begin = find(pt->head, offset);
+  struct piece_position end = find(begin.piece, begin.offset + len - 1);
 
   // create change
   struct change_stack *change = malloc(sizeof(struct change_stack));
@@ -327,11 +311,11 @@ void pt_delete(PieceTable *pt, size_t offset, size_t len) {
 }
 
 void pt_insert(PieceTable *pt, size_t offset, char *str, size_t len) {
-  if (len == 0)
+  if (len == 0 || offset > len)
     return;
 
   // find insertion position
-  struct position pos = find(pt->head, offset);
+  struct piece_position pos = find(pt->head, offset);
 
   // create change
   struct change_stack *change = malloc(sizeof(struct change_stack));
@@ -365,13 +349,8 @@ void pt_insert(PieceTable *pt, size_t offset, char *str, size_t len) {
   }
 
   // create old piece range
-  if (pt->len == 0) {
-    old->head = pt->head;
-    old->tail = pt->tail;
-  } else {
-    old->head = pos.piece->prev;
-    old->tail = pos.piece->next;
-  }
+  old->head = pos.piece->prev;
+  old->tail = pos.offset == 0 ? pos.piece : pos.piece->next;
 
   // apply change
   pr_swap(new, old);
@@ -414,7 +393,7 @@ void chs_free(struct change_stack *chs) {
 int main() {
   printf("--start--\n");
   PieceTable *pt = pt_new();
-  pt_load(pt, "/home/alvaro/ws/piece-table/piece_table.c");
+  pt_load_from_file(pt, "/home/alvaro/ws/piece-table/piece_table.c");
   // write(STDOUT_FILENO, pt->original_buffer, pt->original_buffer_len);
   pt_print(pt);
   pt_free(pt);
