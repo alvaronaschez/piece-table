@@ -13,6 +13,7 @@
 
 struct PieceTable;
 struct piece;
+struct buffer;
 enum buffer_type { ORIGINAL, ADD };
 struct piece_range;
 struct piece_position;
@@ -32,7 +33,7 @@ void pr_swap(struct piece_range *current, struct piece_range *new);
 PieceTable *pt_new();
 void pt_free(PieceTable *);
 void pt_load_from_file(PieceTable *, char *);
-void pt_print(PieceTable *);
+void pt_print(PieceTable *, int file_descriptor);
 char *pt_to_string(PieceTable *, size_t offset, size_t len);
 void pt_insert(PieceTable *pt, size_t offset, char *str, size_t len);
 void pt_delete(PieceTable *pt, size_t offset, size_t len);
@@ -41,10 +42,11 @@ struct piece *pt_new_piece_from_string(PieceTable *pt, char *string,
                                        size_t len);
 
 struct PieceTable {
-  char *original_buffer, *add_buffer;
-  size_t original_buffer_len;
-  size_t add_buffer_len, add_buffer_capacity;
-  // struct piece *head, *tail; // sentinel nodes
+  // char *original_buffer, *add_buffer;
+  // size_t original_buffer_len;
+  // size_t add_buffer_len, add_buffer_capacity;
+  //  struct piece *head, *tail; // sentinel nodes
+  struct buffer *original_buffer, *add_buffer;
   struct piece_range *pieces;
   size_t len;
 
@@ -127,23 +129,59 @@ void pt_save_change(PieceTable *pt, struct piece_range *old,
   change->next = pt->undo_stack;
   pt->undo_stack = change;
 }
+struct buffer {
+  char *data;
+  size_t len, capacity;
+};
+struct buffer *b_create_empty(size_t capacity) {
+  struct buffer *b = malloc(sizeof(struct buffer));
+  b->data = calloc(capacity, sizeof(char));
+  b->len = 0;
+  b->capacity = capacity;
+  return b;
+}
+struct buffer *b_create_readonly(char *data, size_t len) {
+  struct buffer *b = malloc(sizeof(struct buffer));
+  b->data = data;
+  b->len = len;
+  b->capacity = 0;
+  return b;
+}
+void b_free(struct buffer *b) {
+  free(b->data);
+  free(b);
+}
+void b_append(struct buffer *b, char *string, size_t len) {
+  if (len == 0 || b->capacity == 0)
+    return;
+  // increase capacity
+  if (b->capacity < b->len + len) {
+    while (b->capacity < b->len + len) {
+      b->capacity *= 2;
+    }
+    b->data = realloc(b->data, b->capacity);
+  }
+  b->len += len;
+  memcpy(string, b->data + b->len, len);
+}
+void pt_save_to_file(PieceTable *pt, char *file_name){
+  int fd = open(file_name, O_WRONLY|O_CREAT);
+  if(fd==-1){
+    printf("ERROR: save file/n");
+    exit(EXIT_FAILURE);
+  }
+  pt_print(pt, fd);
+  close(fd);
+}
 /*****************************************************************************/
 
 PieceTable *pt_new() {
   PieceTable *pt = calloc(1, sizeof(PieceTable));
 
-  // init dummy nodes
   pt->pieces = pr_create_empty();
-
   pt->original_buffer = NULL;
-  pt->original_buffer_len = 0;
-
-  pt->add_buffer = calloc(ADD_BUFFER_INITIAL_CAPACITY, sizeof(char));
-  pt->add_buffer_len = 0;
-  pt->add_buffer_capacity = ADD_BUFFER_INITIAL_CAPACITY;
-
+  pt->add_buffer = b_create_empty(ADD_BUFFER_INITIAL_CAPACITY);
   pt->len = 0;
-
   return pt;
 }
 
@@ -152,7 +190,9 @@ void pt_free(PieceTable *pt) {
 
   // unmap original buffer
   if (pt->original_buffer)
-    munmap(pt->original_buffer, pt->original_buffer_len);
+    munmap(pt->original_buffer->data, pt->original_buffer->len);
+
+  b_free(pt->add_buffer);
 
   // free undo and redo stacks
   chs_free(pt->undo_stack);
@@ -174,25 +214,23 @@ void pt_load_from_file(PieceTable *pt, char *file_name) {
   if (fstat(fd, &sb) == -1)
     handle_error("fstat");
 
-  pt->original_buffer_len = sb.st_size;
-
-  pt->original_buffer =
-      mmap(NULL, pt->original_buffer_len, PROT_READ, MAP_PRIVATE, fd, 0);
+  pt->original_buffer = b_create_readonly(
+      mmap(NULL, sb.st_size, PROT_READ, MAP_PRIVATE, fd, 0), sb.st_size);
   close(fd);
   if (pt->original_buffer == MAP_FAILED)
     handle_error("mmap");
 
   struct piece *new_piece =
-      p_create_with(ORIGINAL, 0, pt->original_buffer_len, NULL, NULL);
+      p_create_with(ORIGINAL, 0, pt->original_buffer->len, NULL, NULL);
   pr_append_piece(pt->pieces, new_piece);
 }
 
-void pt_print(PieceTable *pt) {
+void pt_print(PieceTable *pt, int file_descriptor) {
   struct piece *p = pt->pieces->head->next;
   while (p != pt->pieces->tail) {
-    const void *buf =
-        p->buffer == ORIGINAL ? pt->original_buffer : pt->add_buffer;
-    write(STDOUT_FILENO, buf + p->offset, p->len);
+    const void *buf = p->buffer == ORIGINAL ? pt->original_buffer->data
+                                            : pt->add_buffer->data;
+    write(file_descriptor, buf + p->offset, p->len);
     p = p->next;
   }
 }
@@ -217,13 +255,8 @@ struct piece *pt_new_piece_from_string(PieceTable *pt, char *string,
                                        size_t len) {
   if (len == 0)
     return NULL;
-  // make room in add_buffer
-  while (pt->add_buffer_capacity < pt->add_buffer_len + len) {
-    pt->add_buffer = realloc(pt->add_buffer, pt->add_buffer_capacity *= 2);
-  }
-  memcpy(string, pt->add_buffer + pt->add_buffer_len, len);
-  struct piece *p = p_create_with(ADD, pt->add_buffer_len, len, NULL, NULL);
-  pt->add_buffer_len += len;
+  b_append(pt->add_buffer, string, len);
+  struct piece *p = p_create_with(ADD, pt->add_buffer->len, len, NULL, NULL);
   return p;
 }
 
@@ -326,8 +359,9 @@ void pt_insert(PieceTable *pt, size_t offset, char *str, size_t len) {
   struct piece_position pos = p_find(pt->pieces->head, offset);
 
   if (pos.piece->buffer == ADD &&
-      pos.piece->offset + pos.piece->len == pt->add_buffer_len) {
-    // TODO:cache
+      pos.piece->offset + pos.piece->len == pt->add_buffer->len) {
+    b_append(pt->add_buffer, str, len);
+    pos.piece->len += len;
     return;
   }
 
@@ -390,8 +424,8 @@ int main() {
   printf("--start--\n");
   PieceTable *pt = pt_new();
   pt_load_from_file(pt, "/home/alvaro/ws/piece-table/piece_table.c");
-  // write(STDOUT_FILENO, pt->original_buffer, pt->original_buffer_len);
-  pt_print(pt);
+  pt_print(pt, STDOUT_FILENO);
+  pt_save_to_file(pt, "/home/alvaro/ws/piece-table/piece_table2.c");
   pt_free(pt);
   printf("--end--\n");
 }
