@@ -1,22 +1,20 @@
-#ifndef piece_table
-#define piece_table
+#ifndef piece_table_h
+#define piece_table_h
 
-#include <stdbool.h>
+//#include <stdbool.h>
 #include <stddef.h>
 
-typedef struct PieceTable PieceTable;
+typedef struct piece_table PieceTable;
+typedef struct piece_position PieceTableIterator;
 
-PieceTable *pt_new();
+PieceTable *pt_create();
 void pt_free(PieceTable *);
 
-void pt_load(PieceTable *, char *file_name);
-void pt_save(PieceTable *);
+void pt_load_from_file(PieceTable *, char *);
+void pt_save_to_file(PieceTable *, char *);
 
-//void pt_insert(PieceTable *, size_t offset, char *data, size_t len);
-//void pt_delete(PieceTable *, size_t offset, size_t len);
-
-bool pt_byte_at(PieceTable *, size_t pos, char *c, unsigned char len);
-bool pt_codepoint_at(PieceTable *, size_t pos, char *c, unsigned char len);
+void pt_delete(PieceTable *, size_t offset, size_t len);
+void pt_insert(PieceTable *, size_t offset, char *str, size_t len);
 
 void pt_undo(PieceTable *);
 void pt_redo(PieceTable *);

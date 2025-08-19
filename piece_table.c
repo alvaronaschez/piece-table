@@ -8,10 +8,11 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <stdbool.h>
 
 #define ADD_BUFFER_INITIAL_CAPACITY 1024
 
-struct PieceTable {
+struct piece_table {
   struct buffer *original_buffer, *add_buffer;
   struct piece_range *pieces;
   size_t len;
@@ -23,10 +24,9 @@ struct buffer {
   size_t len, capacity;
 };
 
-enum buffer_type { ORIGINAL, ADD };
 
 struct piece {
-  enum buffer_type buffer;
+  struct buffer *buffer;
   size_t offset, len;
   struct piece *next, *prev;
 };
@@ -43,6 +43,7 @@ struct piece_position {
 struct change_stack {
   struct piece_range *new, *old;
   struct change_stack *next;
+  //size_t offset; // ???
 };
 
 /* buffer */
@@ -85,7 +86,7 @@ struct piece_position p_find(struct piece *p, size_t offset) {
     return (struct piece_position){.piece = p, .offset = offset};
   return p_find(p->next, offset - p->len);
 }
-struct piece *p_create_with(enum buffer_type buffer, size_t offset, size_t len,
+struct piece *p_create_with(struct buffer *buffer, size_t offset, size_t len,
                             struct piece *prev, struct piece *next) {
   struct piece *p = malloc(sizeof(struct piece));
   p->buffer = buffer;
@@ -222,7 +223,7 @@ struct piece *pt_create_piece_from_string(PieceTable *pt, char *string,
   if (len == 0)
     return NULL;
   b_append(pt->add_buffer, string, len);
-  struct piece *p = p_create_with(ADD, pt->add_buffer->len, len, NULL, NULL);
+  struct piece *p = p_create_with(pt->add_buffer, pt->add_buffer->len, len, NULL, NULL);
   return p;
 }
 void pt_save_change(PieceTable *pt, struct piece_range *old,
@@ -236,9 +237,7 @@ void pt_save_change(PieceTable *pt, struct piece_range *old,
 void pt_print(PieceTable *pt, int file_descriptor) {
   struct piece *p = pt->pieces->head->next;
   while (p != pt->pieces->tail) {
-    const void *buf = p->buffer == ORIGINAL ? pt->original_buffer->data
-                                            : pt->add_buffer->data;
-    write(file_descriptor, buf + p->offset, p->len);
+    write(file_descriptor, p->buffer->data + p->offset, p->len);
     p = p->next;
   }
 }
@@ -292,7 +291,7 @@ void pt_load_from_file(PieceTable *pt, char *file_name) {
   }
 
   struct piece *new_piece =
-      p_create_with(ORIGINAL, 0, pt->original_buffer->len, NULL, NULL);
+      p_create_with(pt->original_buffer, 0, pt->original_buffer->len, NULL, NULL);
   pr_append_piece(pt->pieces, new_piece);
 }
 
@@ -353,7 +352,7 @@ void pt_insert(PieceTable *pt, size_t offset, char *str, size_t len) {
   // find insertion position
   struct piece_position pos = p_find(pt->pieces->head, offset);
 
-  if (pos.piece->buffer == ADD &&
+  if (pos.piece->buffer == pt->add_buffer &&
       pos.piece->offset + pos.piece->len == pt->add_buffer->len) {
     b_append(pt->add_buffer, str, len);
     pos.piece->len += len;
