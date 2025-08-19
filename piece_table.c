@@ -189,6 +189,26 @@ void chs_free(struct change_stack *chs) {
   chs_free(change_next);
 }
 
+static inline void chs_push(struct change_stack **chs, struct change_stack *ch){
+  ch->next = *chs;
+  *chs = ch;
+}
+
+static inline struct change_stack *chs_pop(struct change_stack **chs){
+  if(chs==NULL || *chs==NULL)
+    return NULL;
+  struct change_stack *ch = *chs;
+  *chs = ch->next;
+  ch->next = NULL;
+  return ch;
+}
+
+void chs_swap(struct change_stack *ch){
+  struct piece_range *aux = ch->new;
+  ch->new = ch->old;
+  ch->old = aux;
+}
+
 /* pt private */
 struct piece *pt_create_piece_from_string(PieceTable *pt, char *string,
                                        size_t len) {
@@ -365,9 +385,22 @@ void pt_insert(PieceTable *pt, size_t offset, char *str, size_t len) {
   pt_free_redo_stack(pt);
 }
 
-// TODO
-void pt_undo(PieceTable *pt){}
-void pt_redo(PieceTable *pt){}
+void pt_undo(PieceTable *pt){
+  if(!pt->undo_stack)
+    return;
+  struct change_stack *ch = chs_pop(&pt->undo_stack);
+  pr_swap(ch->old, ch->new);
+  chs_swap(ch); // now new is old and old is new
+  chs_push(&pt->redo_stack, ch);
+}
+void pt_redo(PieceTable *pt){
+  if(!pt->redo_stack)
+    return;
+  struct change_stack *ch = chs_pop(&pt->redo_stack);
+  pr_swap(ch->old, ch->new);
+  chs_swap(ch); // now new is old and old is new
+  chs_push(&pt->undo_stack, ch);
+}
 
 /* main */
 
