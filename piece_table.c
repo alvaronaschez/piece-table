@@ -180,13 +180,20 @@ void pr_swap(struct piece_range *pp, struct piece_range *qq) {
 }
 
 /* change stack */
-void chs_free(struct change_stack *chs) {
+void _chs_free(struct change_stack *chs) {
   if (!chs)
     return;
   struct change_stack *change_next = chs->next;
   free(chs);
   pr_free(chs->old);
-  chs_free(change_next);
+  _chs_free(change_next);
+}
+
+void chs_free(struct change_stack **chs){
+  if(!chs)
+    return;
+  _chs_free(*chs);
+  *chs = NULL;
 }
 
 static inline void chs_push(struct change_stack **chs, struct change_stack *ch){
@@ -217,10 +224,6 @@ struct piece *pt_create_piece_from_string(PieceTable *pt, char *string,
   b_append(pt->add_buffer, string, len);
   struct piece *p = p_create_with(ADD, pt->add_buffer->len, len, NULL, NULL);
   return p;
-}
-void pt_free_redo_stack(PieceTable *pt) {
-  chs_free(pt->redo_stack);
-  pt->redo_stack = NULL;
 }
 void pt_save_change(PieceTable *pt, struct piece_range *old,
                     struct piece_range *new) {
@@ -262,8 +265,8 @@ void pt_free(PieceTable *pt) {
   b_free(pt->add_buffer);
 
   // free undo and redo stacks
-  chs_free(pt->undo_stack);
-  chs_free(pt->redo_stack);
+  chs_free(&pt->undo_stack);
+  chs_free(&pt->redo_stack);
 }
 
 void pt_load_from_file(PieceTable *pt, char *file_name) {
@@ -340,7 +343,7 @@ void pt_delete(PieceTable *pt, size_t offset, size_t len) {
   pr_swap(new, old);
   // update undo and redo stacks
   pt_save_change(pt, old, new);
-  pt_free_redo_stack(pt);
+  chs_free(&pt->redo_stack);
 }
 
 void pt_insert(PieceTable *pt, size_t offset, char *str, size_t len) {
@@ -382,7 +385,7 @@ void pt_insert(PieceTable *pt, size_t offset, char *str, size_t len) {
   pr_swap(new, old);
   // update undo and redo stacks
   pt_save_change(pt, old, new);
-  pt_free_redo_stack(pt);
+  chs_free(&pt->redo_stack);
 }
 
 void pt_undo(PieceTable *pt){
