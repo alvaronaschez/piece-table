@@ -1,14 +1,15 @@
+// TODO: update add buffer len when undoing and redoing
 #include "piece_table.h"
 
 #include <assert.h>
 #include <fcntl.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
-#include <stdbool.h>
 
 #define ADD_BUFFER_INITIAL_CAPACITY 1024
 
@@ -23,7 +24,6 @@ struct buffer {
   char *data;
   size_t len, capacity;
 };
-
 
 struct piece {
   struct buffer *buffer;
@@ -43,7 +43,7 @@ struct piece_position {
 struct change_stack {
   struct piece_range *new, *old;
   struct change_stack *next;
-  //size_t offset; // ???
+  // size_t offset; // ???
 };
 
 /* buffer */
@@ -68,8 +68,8 @@ void b_free(struct buffer *b) {
 void b_append(struct buffer *b, char *string, size_t len) {
   if (len == 0 || b->capacity == 0)
     return;
-  // increase capacity
   if (b->capacity < b->len + len) {
+  // increase capacity
     while (b->capacity < b->len + len) {
       b->capacity *= 2;
     }
@@ -77,6 +77,12 @@ void b_append(struct buffer *b, char *string, size_t len) {
   }
   b->len += len;
   memcpy(string, b->data + b->len, len);
+}
+
+void b_delete(struct buffer *b, size_t len){
+  if(len == 0 || b->capacity == 0)
+    return;
+  b->len -= len;
 }
 
 /* piece */
@@ -190,20 +196,21 @@ void _chs_free(struct change_stack *chs) {
   _chs_free(change_next);
 }
 
-void chs_free(struct change_stack **chs){
-  if(!chs)
+void chs_free(struct change_stack **chs) {
+  if (!chs)
     return;
   _chs_free(*chs);
   *chs = NULL;
 }
 
-static inline void chs_push(struct change_stack **chs, struct change_stack *ch){
+static inline void chs_push(struct change_stack **chs,
+                            struct change_stack *ch) {
   ch->next = *chs;
   *chs = ch;
 }
 
-static inline struct change_stack *chs_pop(struct change_stack **chs){
-  if(chs==NULL || *chs==NULL)
+static inline struct change_stack *chs_pop(struct change_stack **chs) {
+  if (chs == NULL || *chs == NULL)
     return NULL;
   struct change_stack *ch = *chs;
   *chs = ch->next;
@@ -211,7 +218,7 @@ static inline struct change_stack *chs_pop(struct change_stack **chs){
   return ch;
 }
 
-void chs_swap(struct change_stack *ch){
+void chs_swap(struct change_stack *ch) {
   struct piece_range *aux = ch->new;
   ch->new = ch->old;
   ch->old = aux;
@@ -219,11 +226,12 @@ void chs_swap(struct change_stack *ch){
 
 /* pt private */
 struct piece *pt_create_piece_from_string(PieceTable *pt, char *string,
-                                       size_t len) {
+                                          size_t len) {
   if (len == 0)
     return NULL;
   b_append(pt->add_buffer, string, len);
-  struct piece *p = p_create_with(pt->add_buffer, pt->add_buffer->len, len, NULL, NULL);
+  struct piece *p =
+      p_create_with(pt->add_buffer, pt->add_buffer->len, len, NULL, NULL);
   return p;
 }
 void pt_save_change(PieceTable *pt, struct piece_range *old,
@@ -270,14 +278,14 @@ void pt_free(PieceTable *pt) {
 
 void pt_load_from_file(PieceTable *pt, char *file_name) {
   int fd = open(file_name, O_RDONLY);
-  if (fd == -1){
+  if (fd == -1) {
     printf("ERROR: open file\n");
     exit(EXIT_FAILURE);
   }
 
   // obtain file size
   struct stat sb;
-  if (fstat(fd, &sb) == -1){
+  if (fstat(fd, &sb) == -1) {
     printf("ERROR: fstat\n");
     exit(EXIT_FAILURE);
   }
@@ -285,19 +293,19 @@ void pt_load_from_file(PieceTable *pt, char *file_name) {
   pt->original_buffer = b_create_readonly(
       mmap(NULL, sb.st_size, PROT_READ, MAP_PRIVATE, fd, 0), sb.st_size);
   close(fd);
-  if (pt->original_buffer == MAP_FAILED){
+  if (pt->original_buffer == MAP_FAILED) {
     printf("ERROR: mmap\n");
     exit(EXIT_FAILURE);
   }
 
-  struct piece *new_piece =
-      p_create_with(pt->original_buffer, 0, pt->original_buffer->len, NULL, NULL);
+  struct piece *new_piece = p_create_with(pt->original_buffer, 0,
+                                          pt->original_buffer->len, NULL, NULL);
   pr_append_piece(pt->pieces, new_piece);
 }
 
-void pt_save_to_file(PieceTable *pt, char *file_name){
-  int fd = open(file_name, O_WRONLY|O_CREAT);
-  if(fd==-1){
+void pt_save_to_file(PieceTable *pt, char *file_name) {
+  int fd = open(file_name, O_WRONLY | O_CREAT);
+  if (fd == -1) {
     printf("ERROR: save file/n");
     exit(EXIT_FAILURE);
   }
@@ -305,14 +313,14 @@ void pt_save_to_file(PieceTable *pt, char *file_name){
   close(fd);
 }
 
-//char *pt_to_string(PieceTable *pt, size_t offset, size_t len) {
-//  char *c = malloc(len + 1);
-//  c[len] = '\0';
-//  if (len == 0 || offset + len - 1 > pt->len)
-//    return c;
-//  // TODO
-//  return c;
-//}
+// char *pt_to_string(PieceTable *pt, size_t offset, size_t len) {
+//   char *c = malloc(len + 1);
+//   c[len] = '\0';
+//   if (len == 0 || offset + len - 1 > pt->len)
+//     return c;
+//   // TODO
+//   return c;
+// }
 
 void pt_delete(PieceTable *pt, size_t offset, size_t len) {
   if (len == 0 || pt->len == 0 || offset + len > pt->len)
@@ -321,6 +329,23 @@ void pt_delete(PieceTable *pt, size_t offset, size_t len) {
   // find begin and end positions to delete
   struct piece_position begin = p_find(pt->pieces->head, offset);
   struct piece_position end = p_find(begin.piece, begin.offset + len - 1);
+
+  // TODO
+  // if at the end of latest modification
+  if (begin.piece == end.piece && begin.piece->buffer == pt->add_buffer &&
+      pt->redo_stack == NULL &&
+      begin.piece->offset + begin.piece->len == pt->add_buffer->len) {
+    struct piece *p = begin.piece;
+    if (p->len == 0) {
+      p->len -= len;
+      pt->add_buffer->len -= len; // b_delete(pt->add_buffer, len);
+    } else {
+      // TODO
+      // delete entire piece
+      // use undo mechanism
+    }
+    return;
+  }
 
   // create changes
   struct piece_range *old = pr_create_with(begin.piece->prev, end.piece->next);
@@ -352,6 +377,7 @@ void pt_insert(PieceTable *pt, size_t offset, char *str, size_t len) {
   // find insertion position
   struct piece_position pos = p_find(pt->pieces->head, offset);
 
+  // if at the end of latest modification
   if (pos.piece->buffer == pt->add_buffer &&
       pos.piece->offset + pos.piece->len == pt->add_buffer->len) {
     b_append(pt->add_buffer, str, len);
@@ -387,16 +413,16 @@ void pt_insert(PieceTable *pt, size_t offset, char *str, size_t len) {
   chs_free(&pt->redo_stack);
 }
 
-void pt_undo(PieceTable *pt){
-  if(!pt->undo_stack)
+void pt_undo(PieceTable *pt) {
+  if (!pt->undo_stack)
     return;
   struct change_stack *ch = chs_pop(&pt->undo_stack);
   pr_swap(ch->old, ch->new);
   chs_swap(ch); // now new is old and old is new
   chs_push(&pt->redo_stack, ch);
 }
-void pt_redo(PieceTable *pt){
-  if(!pt->redo_stack)
+void pt_redo(PieceTable *pt) {
+  if (!pt->redo_stack)
     return;
   struct change_stack *ch = chs_pop(&pt->redo_stack);
   pr_swap(ch->old, ch->new);
